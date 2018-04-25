@@ -89,47 +89,79 @@
         beforeSendFile: function (file) {
           var deferred = WebUploader.Deferred();
           var instance = new WebUploader.Uploader();
+          console.log(file);
           instance.md5File(file)
             .then(function (value) {
               file.hash = value;
-              deferred.resolve();
+              $.ajax({
+                type: "POST",
+                url: "index.php?action=begin",
+                data: {
+                  hash: value,
+                  name: file.name,
+                  size: file.size
+                },
+                dataType: "json",
+                success: function (response) {
+                  if (response.code) {
+                    deferred.reject();
+                  } else {
+                    file.extractcode = response.data.extract_code;
+                    file.exist = response.data.exist;
+                    deferred.resolve();
+                  }
+                },
+                error: function () {
+                  deferred.reject();
+                }
+              });
             });
           return deferred.promise();
         },
-        beforeSendChunk: function (block) {
+        beforeSendChunk: function (chunk) {
           var deferred = WebUploader.Deferred();
-          $.ajax({
-            type: "POST",
-            url: "index.php?action=options",
-            data: {
-              hash: block.file.hash,
-              chunk: block.chunk,
-              size: block.end - block.start
-            },
-            dataType: "json",
-            success: function (response) {
-              if (response.code) {
+          var instance = new WebUploader.Uploader();
+          instance.md5File(chunk.blob)
+            .then(function (value) {
+              chunk.hash = value;
+              if (chunk.file.exist) {
                 deferred.reject();
               } else {
-                deferred.resolve();
+                $.ajax({
+                  type: "POST",
+                  url: "index.php?action=check",
+                  data: {
+                    extractcode: chunk.file.extractcode,
+                    chunk: chunk.chunk,
+                    size: chunk.end - chunk.start
+                  },
+                  dataType: "json",
+                  success: function (response) {
+                    if (response.code) {
+                      deferred.reject();
+                    } else {
+                      deferred.resolve();
+                    }
+                  },
+                  error: function () {
+                    deferred.resolve();
+                  }
+                });
               }
-            },
-            error: function () {
-              deferred.resolve();
-            }
-          });
-          this.owner.options.formData.hash = block.file.hash;
+            });
           return deferred.promise();
         },
         afterSendFile: function (file) {
           $.ajax({
             type: "POST",
-            url: "index.php?action=merge",
+            url: "index.php?action=end",
             data: {
+              extractcode: file.extractcode,
               hash: file.hash,
               name: file.name,
               ext: file.ext,
-              size: file.size
+              size: file.size,
+              exist: file.exist
             },
             success: function (response) {
               response.code && uploader.trigger('uploadError', file);
@@ -149,7 +181,7 @@
       },
       resize: false,
       chunked: true,
-      chunkSize: 5 * 1024 * 1024,
+      chunkSize: 1024 * 1024,
       chunkRetry: 2,
       prepareNextFile: true,
       // duplicate: false,
@@ -171,6 +203,11 @@
     uploader.on('uploadSuccess', function (file) {
       file.state = 'success';
       $('#' + file.id).replaceWith(render(file));
+    });
+
+    uploader.on('uploadBeforeSend', function (chunk, data, headers) {
+      data.extractcode = chunk.file.extractcode;
+      data.hash = chunk.hash;
     });
 
     uploader.on('uploadError', function (file) {
